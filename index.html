@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Thai Family Runner 3D AR</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&display=swap');
+
+        * { box-sizing: border-box; user-select: none; }
+        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #87CEEB; font-family: 'Kanit', sans-serif; }
+        
+        /* Video Background (Mirror Mode) */
+        #webcam-bg {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover;
+            transform: scaleX(-1); z-index: 1; opacity: 0.8;
+        }
+
+        /* Three.js Canvas */
+        #game-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+        
+        /* MediaPipe Hand Tracking Canvas (Overlay) */
+        #hand-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 3; transform: scaleX(-1); pointer-events: none; }
+
+        /* UI Layer */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 4; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; }
+        
+        /* HUD Top */
+        .hud-top { display: flex; justify-content: space-between; width: 100%; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); color: white; font-size: 24px; font-weight: 600; }
+        .hud-left, .hud-right { display: flex; flex-direction: column; gap: 10px; }
+        .hud-right { text-align: right; }
+        
+        /* Question Banner */
+        #question-banner { align-self: center; background: rgba(255, 255, 255, 0.9); color: #FF4500; padding: 15px 40px; border-radius: 30px; font-size: 36px; font-weight: 800; border: 4px solid #FFD700; box-shadow: 0 10px 20px rgba(0,0,0,0.3); text-align: center; margin-top: 20px; }
+
+        /* Status & Feedback */
+        #feedback-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 80px; font-weight: 800; color: #32CD32; text-shadow: 0 0 20px white; opacity: 0; transition: opacity 0.3s; }
+
+        /* Screens */
+        .screen { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: auto; color: white; text-align: center; }
+        .hidden { display: none !important; }
+        h1 { font-size: 64px; margin-bottom: 20px; color: #FFD700; }
+        p { font-size: 24px; margin: 10px 0; }
+        .btn { background: #FF4500; color: white; padding: 15px 40px; font-size: 32px; font-family: 'Kanit'; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 8px 0 #cc3700; margin-top: 30px; font-weight: bold; transition: transform 0.1s; }
+        .btn:active { transform: translateY(8px); box-shadow: none; }
+        
+        /* Answer Columns Indicator */
+        .columns-indicator { position: absolute; bottom: 50px; left: 0; width: 100%; display: flex; justify-content: space-around; z-index: 4; }
+        .col-badge { background: rgba(0,0,0,0.6); color: white; padding: 10px 30px; border-radius: 20px; font-size: 24px; font-weight: bold; border: 2px solid white; }
+    </style>
+    
+    <!-- Three.js & Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <!-- Camera Background -->
+    <video id="webcam-bg" autoplay playsinline></video>
+    
+    <!-- 3D Scene -->
+    <div id="game-canvas"></div>
+    
+    <!-- MediaPipe Drawing Overlay -->
+    <canvas id="hand-canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="hud-left">
+                <div id="ui-score">⭐ คะแนน: 0</div>
+                <div id="ui-progress">📚 ข้อที่: 1 / 20</div>
+                <div id="ui-hearts">❤️ หัวใจ: 3</div>
+            </div>
+            <div id="question-banner">เลือกคำที่เป็น "สมาชิกในครอบครัว"</div>
+            <div class="hud-right">
+                <div id="ui-combo">🔥 Combo: x1</div>
+                <div id="ui-time">⏳ เวลาข้อนี้: 10s</div>
+                <div id="ui-accuracy">🎯 แม่นยำ: 100%</div>
+            </div>
+        </div>
+        <div id="feedback-text">เก่งมาก!</div>
+        
+        <div class="columns-indicator">
+            <div class="col-badge">☝️ ชู 1 นิ้ว</div>
+            <div class="col-badge">✌️ ชู 2 นิ้ว</div>
+            <div class="col-badge">🤟 ชู 3 นิ้ว</div>
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="screen">
+        <h1>Thai Family Runner 3D</h1>
+        <p>ยกมือขึ้นเพื่อใช้กล้อง AR และชู 1, 2 หรือ 3 นิ้วเพื่อเลือกคำตอบ</p>
+        <button class="btn" id="start-btn">เริ่มเกม</button>
+    </div>
+
+    <!-- Result Screen -->
+    <div id="result-screen" class="screen hidden">
+        <h1>สรุปผลการเล่น</h1>
+        <h2 id="result-medal" style="color: #FFD700; font-size: 48px;">🏆 นักล่าอักษรทองคำ</h2>
+        <p id="result-score">คะแนนรวม: 0</p>
+        <p id="result-accuracy">ความแม่นยำ: 0%</p>
+        <p id="result-combo">Combo สูงสุด: 0</p>
+        <button class="btn" onclick="location.reload()">เล่นอีกครั้ง</button>
+    </div>
+
+<script type="module">
+    /**
+     * GAME CONFIGURATION & DATABASE
+     * สามารถแก้ไขชุดคำศัพท์ที่นี่เพื่อเปลี่ยนไปใช้วิชาอื่น
+     */
+    const GAME_CONFIG = {
+        totalQuestions: 20,
+        readTimeSeconds: 10, // เวลาในการอ่าน (วิ่งเข้าหา 10 วิ)
+        confirmHoldTime: 1.0, // ต้องชูนิ้วค้าง 1 วินาที
+        familyWords: ["ปู่", "ย่า", "ตา", "ยาย", "ลุง", "ป้า", "น้า", "อา", "พ่อ", "แม่", "พี่", "น้อง"],
+        distractorWords: ["กบ", "หมา", "นก", "แมว", "ปลา", "ครู", "เพื่อน", "ช้าง", "ใบโบก", "ใบบัว"]
+    };
+
+    /**
+     * SOUND MANAGER
+     * ใช้ Web Audio API เพื่อสังเคราะห์เสียงง่ายๆ โดยไม่ต้องโหลดไฟล์ภายนอก
+     */
+    class SoundManager {
+        constructor() { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+        playTone(freq, type, duration) {
+            if(this.ctx.state === 'suspended') this.ctx.resume();
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = type; osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+            gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+            osc.connect(gain); gain.connect(this.ctx.destination);
+            osc.start(); osc.stop(this.ctx.currentTime + duration);
+        }
+        playCorrect() { this.playTone(600, 'sine', 0.1); setTimeout(()=>this.playTone(800, 'sine', 0.3), 100); }
+        playWrong() { this.playTone(300, 'sawtooth', 0.4); }
+        playSelect() { this.playTone(400, 'square', 0.1); }
+    }
+    const audio = new SoundManager();
+
+    /**
+     * THREE.JS 3D SCENE MANAGER
+     */
+    class Scene3DManager {
+        constructor() {
+            this.container = document.getElementById('game-canvas');
+            this.scene = new THREE.Scene();
+            // ปล่อยให้พื้นหลังโปร่งใสเพื่อโชว์กล้อง Webcam
+            
+            this.camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+            this.camera.position.set(0, 2, 15);
+
+            this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.container.appendChild(this.renderer.domElement);
+
+            this.addEnvironment();
+            this.wordSprites = [];
+            
+            window.addEventListener('resize', () => {
+                this.camera.aspect = window.innerWidth/window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        addEnvironment() {
+            // แสง
+            const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+            this.scene.add(ambient);
+
+            // พื้นถนน Runner
+            const geo = new THREE.PlaneGeometry(20, 200);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x88cc88, transparent: true, opacity: 0.5 });
+            const ground = new THREE.Mesh(geo, mat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -2;
+            this.scene.add(ground);
+        }
+
+        createWordSprite(text, positionX, isCorrect) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // พื้นหลังและกรอบ
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.roundRect(20, 20, 472, 216, 40);
+            ctx.fill();
+            ctx.lineWidth = 15;
+            ctx.strokeStyle = '#FFD700';
+            ctx.stroke();
+
+            // ตัวอักษร
+            ctx.font = 'bold 100px Kanit';
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 256, 128);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const mat = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(mat);
+            
+            sprite.scale.set(6, 3, 1);
+            // เริ่มจากไกลๆ
+            sprite.position.set(positionX, 2, -100);
+            sprite.userData = { isCorrect, text, baseX: positionX };
+            
+            this.scene.add(sprite);
+            this.wordSprites.push(sprite);
+            return sprite;
+        }
+
+        clearWords() {
+            this.wordSprites.forEach(s => this.scene.remove(s));
+            this.wordSprites = [];
+        }
+
+        update(deltaTime, highlightIndex = -1) {
+            // เคลื่อนที่คำศัพท์เข้าหาผู้เล่น (Runner Effect)
+            const speed = 100 / GAME_CONFIG.readTimeSeconds; // วิ่งจาก -100 ถึง 0 ใน 10 วิ
+            
+            this.wordSprites.forEach((sprite, index) => {
+                sprite.position.z += speed * deltaTime;
+                // อนิเมชั่นลอยขึ้นลงเบาๆ
+                sprite.position.y = 2 + Math.sin(Date.now() * 0.003 + index) * 0.5;
+                
+                // Highlight คำที่ถูกเลือกด้วยนิ้ว
+                if (index === highlightIndex) {
+                    sprite.scale.set(7, 3.5, 1); // ขยายใหญ่
+                    sprite.material.color.setHex(0xffffaa); // เปล่งแสง
+                } else {
+                    sprite.scale.set(6, 3, 1);
+                    sprite.material.color.setHex(0xffffff);
+                }
+            });
+            this.renderer.render(this.scene, this.camera);
+        }
+    }
+
+    /**
+     * MEDIAPIPE HANDS MANAGER & FINGER COUNTING
+     */
+    class HandTracker {
+        constructor(videoElement, canvasElement) {
+            this.video = videoElement;
+            this.canvas = canvasElement;
+            this.ctx = canvasElement.getContext('2d');
+            this.fingersCount = 0;
+            
+            this.hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            this.hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+            
+            this.hands.onResults(this.onResults.bind(this));
+        }
+
+        start() {
+            const camera = new Camera(this.video, {
+                onFrame: async () => { await this.hands.send({image: this.video}); },
+                width: 1280, height: 720
+            });
+            camera.start();
+        }
+
+        onResults(results) {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+            this.ctx.save();
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+            this.fingersCount = 0; // Reset
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // วาดโครงร่างมือ (Skeleton) พร้อมวงแหวนเรืองแสง
+                drawConnectors(this.ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+                drawLandmarks(this.ctx, landmarks, {color: '#FFD700', lineWidth: 2, radius: 5});
+
+                // Algorithm ตรวจจับนิ้วมือ (1, 2, 3) อย่างง่ายสำหรับเด็ก
+                // นิ้วชี้, กลาง, นาง (Index=8, Middle=12, Ring=16) เทียบกับข้อต่อ (PIP=6, 10, 14)
+                const isIndexUp = landmarks[8].y < landmarks[6].y;
+                const isMiddleUp = landmarks[12].y < landmarks[10].y;
+                const isRingUp = landmarks[16].y < landmarks[14].y;
+                
+                if (isIndexUp) this.fingersCount++;
+                if (isMiddleUp) this.fingersCount++;
+                if (isRingUp) this.fingersCount++;
+                
+                // จำกัดผลลัพธ์ให้ไม่เกิน 3 ตามโจทย์
+                if(this.fingersCount > 3) this.fingersCount = 3; 
+
+                // วาดวงแหวนที่ปลายนิ้วที่ชู
+                if(isIndexUp) this.drawGlow(landmarks[8]);
+                if(isMiddleUp) this.drawGlow(landmarks[12]);
+                if(isRingUp) this.drawGlow(landmarks[16]);
+            }
+            this.ctx.restore();
+        }
+
+        drawGlow(landmark) {
+            const x = landmark.x * this.canvas.width;
+            const y = landmark.y * this.canvas.height;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 20, 0, 2 * Math.PI);
+            this.ctx.fillStyle = 'rgba(255, 215, 0, 0.5)';
+            this.ctx.fill();
+        }
+    }
+
+    /**
+     * MAIN GAME LOOP & LOGIC
+     */
+    class GameManager {
+        constructor() {
+            this.sceneManager = new Scene3DManager();
+            this.handTracker = new HandTracker(document.getElementById('webcam-bg'), document.getElementById('hand-canvas'));
+            
+            // สถานะเกม
+            this.currentQuestion = 0;
+            this.score = 0;
+            this.combo = 0;
+            this.maxCombo = 0;
+            this.correctCount = 0;
+            this.wrongCount = 0;
+            
+            this.clock = new THREE.Clock();
+            this.questionTimer = GAME_CONFIG.readTimeSeconds;
+            
+            this.selectedAnswer = -1; // 0, 1, 2
+            this.holdTime = 0;
+            this.isAnswerLocked = false;
+
+            this.bindUI();
+        }
+
+        bindUI() {
+            document.getElementById('start-btn').addEventListener('click', () => {
+                document.getElementById('start-screen').classList.add('hidden');
+                this.handTracker.start();
+                this.startGame();
+            });
+        }
+
+        startGame() {
+            this.currentQuestion = 0;
+            this.score = 0;
+            this.combo = 0;
+            this.correctCount = 0;
+            this.nextQuestion();
+            this.updateHUD();
+            this.loop();
+        }
+
+        nextQuestion() {
+            this.currentQuestion++;
+            if (this.currentQuestion > GAME_CONFIG.totalQuestions) {
+                this.showResult();
+                return;
+            }
+
+            this.isAnswerLocked = false;
+            this.questionTimer = GAME_CONFIG.readTimeSeconds;
+            this.sceneManager.clearWords();
+
+            // สุ่มคำตอบและตัวหลอก
+            const correctWord = GAME_CONFIG.familyWords[Math.floor(Math.random() * GAME_CONFIG.familyWords.length)];
+            let distractors = [...GAME_CONFIG.distractorWords].sort(() => 0.5 - Math.random()).slice(0, 2);
+            
+            let choices = [
+                { text: correctWord, correct: true },
+                { text: distractors[0], correct: false },
+                { text: distractors[1], correct: false }
+            ].sort(() => 0.5 - Math.random());
+
+            // สร้าง 3D Sprites
+            // ตำแหน่ง X: ซ้าย (-5), กลาง (0), ขวา (5)
+            const positions = [-6, 0, 6];
+            choices.forEach((choice, i) => {
+                this.sceneManager.createWordSprite(choice.text, positions[i], choice.correct);
+            });
+
+            this.updateHUD();
+        }
+
+        updateHUD() {
+            document.getElementById('ui-score').innerText = `⭐ คะแนน: ${this.score}`;
+            document.getElementById('ui-progress').innerText = `📚 ข้อที่: ${this.currentQuestion} / ${GAME_CONFIG.totalQuestions}`;
+            document.getElementById('ui-combo').innerText = `🔥 Combo: x${this.combo}`;
+            
+            let acc = (this.currentQuestion === 1) ? 100 : Math.round((this.correctCount / (this.currentQuestion - 1)) * 100);
+            document.getElementById('ui-accuracy').innerText = `🎯 แม่นยำ: ${acc}%`;
+        }
+
+        handleAnswer(choiceIndex) {
+            if (this.isAnswerLocked) return;
+            this.isAnswerLocked = true;
+
+            const selectedSprite = this.sceneManager.wordSprites[choiceIndex];
+            const isCorrect = selectedSprite.userData.isCorrect;
+
+            const feedback = document.getElementById('feedback-text');
+
+            if (isCorrect) {
+                audio.playCorrect();
+                this.combo++;
+                if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                this.score += 10 + (this.combo * 2); // โบนัสคอมโบ
+                this.correctCount++;
+                
+                feedback.innerText = "ยอดเยี่ยม!";
+                feedback.style.color = "#32CD32";
+                
+                // Confetti & Particle effect จำลองด้วย CSS/DOM อย่างง่ายใน GAS
+                this.createDOMConfetti();
+            } else {
+                audio.playWrong();
+                this.combo = 0;
+                this.score = Math.max(0, this.score - 5);
+                this.wrongCount++;
+                
+                feedback.innerText = "ลองใหม่อีกครั้ง";
+                feedback.style.color = "#FF4500";
+            }
+            
+            feedback.style.opacity = 1;
+            this.updateHUD();
+
+            // เลื่อนไปข้อถัดไปหลังจาก 1.5 วินาที
+            setTimeout(() => {
+                feedback.style.opacity = 0;
+                this.nextQuestion();
+            }, 1500);
+        }
+
+        createDOMConfetti() {
+            const colors = ['#FFD700', '#FF4500', '#32CD32', '#1E90FF'];
+            for(let i=0; i<30; i++) {
+                const conf = document.createElement('div');
+                conf.style.position = 'absolute';
+                conf.style.width = '15px'; conf.style.height = '15px';
+                conf.style.backgroundColor = colors[Math.floor(Math.random()*colors.length)];
+                conf.style.left = '50%'; conf.style.top = '50%';
+                conf.style.zIndex = '100';
+                document.body.appendChild(conf);
+
+                const angle = Math.random() * Math.PI * 2;
+                const velocity = 50 + Math.random() * 150;
+                let tx = Math.cos(angle) * velocity;
+                let ty = Math.sin(angle) * velocity;
+                
+                conf.animate([
+                    { transform: 'translate(0,0) scale(1)', opacity: 1 },
+                    { transform: `translate(${tx}px, ${ty}px) scale(0)`, opacity: 0 }
+                ], { duration: 1000, easing: 'ease-out' }).onfinish = () => conf.remove();
+            }
+        }
+
+        showResult() {
+            document.getElementById('ui-layer').classList.add('hidden');
+            const resScreen = document.getElementById('result-screen');
+            resScreen.classList.remove('hidden');
+
+            const acc = Math.round((this.correctCount / GAME_CONFIG.totalQuestions) * 100);
+            document.getElementById('result-score').innerText = `คะแนนรวม: ${this.score}`;
+            document.getElementById('result-accuracy').innerText = `ความแม่นยำ: ${acc}% (ถูก ${this.correctCount}, ผิด ${this.wrongCount})`;
+            document.getElementById('result-combo').innerText = `Combo สูงสุด: ${this.maxCombo}`;
+
+            let title = "นักล่าอักษรมือใหม่";
+            if(acc >= 80) title = "นักล่าอักษรทองคำ 🏆";
+            else if (acc >= 50) title = "นักล่าอักษรเงิน 🥈";
+            
+            document.getElementById('result-medal').innerText = title;
+        }
+
+        loop() {
+            if (this.currentQuestion > GAME_CONFIG.totalQuestions) return; // จบเกม
+
+            requestAnimationFrame(this.loop.bind(this));
+            const dt = this.clock.getDelta();
+            
+            // อัปเดตเวลา
+            if (!this.isAnswerLocked) {
+                this.questionTimer -= dt;
+                document.getElementById('ui-time').innerText = `⏳ เวลา: ${Math.max(0, Math.ceil(this.questionTimer))}s`;
+                
+                // หากเวลาหมด ข้ามข้อ
+                if (this.questionTimer <= 0) {
+                    this.handleAnswer(-1); // บังคับผิด
+                }
+            }
+
+            // ระบบยืนยันคำตอบด้วยนิ้ว
+            const fingers = this.handTracker.fingersCount;
+            let currentHover = -1;
+            
+            // แปลงจำนวนนิ้ว (1,2,3) เป็น index ตัวเลือก (0,1,2)
+            if (fingers >= 1 && fingers <= 3) {
+                currentHover = fingers - 1; 
+            }
+
+            if (currentHover !== -1 && !this.isAnswerLocked) {
+                if (this.selectedAnswer === currentHover) {
+                    this.holdTime += dt;
+                    if (this.holdTime >= GAME_CONFIG.confirmHoldTime) {
+                        this.handleAnswer(this.selectedAnswer);
+                    }
+                } else {
+                    this.selectedAnswer = currentHover;
+                    this.holdTime = 0;
+                    audio.playSelect(); // เสียงติ๊กเบาๆ เมื่อสลับเป้าหมาย
+                }
+            } else {
+                this.holdTime = 0;
+                this.selectedAnswer = -1;
+            }
+
+            // Render 3D 
+            this.sceneManager.update(dt, this.selectedAnswer);
+        }
+    }
+
+    // Initialize System upon load
+    window.onload = () => {
+        window.game = new GameManager();
+    };
+
+</script>
+</body>
+</html>
